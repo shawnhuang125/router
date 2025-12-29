@@ -1,0 +1,53 @@
+#include <stdio.h>
+#include <arpa/inet.h>
+#include "dhcp.h"
+#include "../../common/include/logger.h"
+
+extern int init_dhcp_socket();
+extern int get_dhcp_option(struct dhcp_packet *packet, uint8_t code, void *out, int max_len);
+
+int main(){
+    int sockfd;
+    struct dhcp_packet recv_packet;
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+
+    //init socket
+    sockfd = init_dhcp_socket();
+    if (sockfd < 0){
+        log_message(LOG_ERROR, "Failed to initailize DHCP Socket.");
+        return 1;
+    }
+    printf("DHCP Server detection is starting..., listed on port 67\n");
+
+    while(1){
+        //printf("Waiting for DHCP packets...\n");
+        ssize_t n = recvfrom(sockfd, &recv_packet, sizeof(recv_packet), 0,
+                             (struct sockaddr *)&client_addr, &addr_len);
+        //判斷有沒有接收到
+        if(n<0){
+            log_message(LOG_ERROR, "recv error or interrupt!");
+            continue;
+        }
+        //取得DHCP類型(OPTION 53)
+        uint8_t msg_type = 0;
+        if(get_dhcp_option(&recv_packet, 53, &msg_type, 1) < 0){
+            log_message(LOG_WARNING, "RECEIVE A NETWORK PACKAGE, CAN NOT ANALYSIS DHCP OPTION 53");
+            continue;
+        }
+        
+        switch(msg_type){
+            case 1: //DHCPDISCOVER
+                log_message(LOG_INFO, "============ RECEIVE DISCOVER ============");
+                log_message(LOG_INFO, "FROM CLIENT MAC: %02x:%02x")
+                break;
+            case 2: //DHCPREQUEST
+                break;
+            case 3: //DHCPRELEASE
+                break;
+            default:
+                log_message(LOG_INFO, "RECEIVE DHCP NETWORK PACKET WHICH IS ANOTHER TYPE: %d", msg_type);
+                break;
+        }
+    }
+}

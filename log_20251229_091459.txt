@@ -1,0 +1,3 @@
+Mon Dec 29 09:14:59 2025 [INFO] Logger initialized successfully.
+Mon Dec 29 09:16:03 2025 [INFO] Detected DHCP DISCOVER FROM CLIENT!
+Mon Dec 29 09:16:05 2025 [INFO] Detected DHCP DISCOVER FROM CLIENT!

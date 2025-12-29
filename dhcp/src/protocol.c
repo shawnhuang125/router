@@ -22,9 +22,10 @@ int get_dhcp_option(struct dhcp_packet *packet, uint8_t code, void *out, int max
             curr++;
             continue;
         }
-
+        if (curr +1 >= end) break; //確保不會讀取到超過 end 的記憶體
         uint8_t len = *(curr + 1);
         uint8_t *val = curr + 2;
+        if (val + len > end) break; //確保 Value 的長度不會超出封包邊界
 
         if (type == code) {
             int copy_len = (len < max_len) ? len : max_len;

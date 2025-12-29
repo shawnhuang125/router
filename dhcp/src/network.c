@@ -8,8 +8,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "dhcp.h"
+#include "../../common/include/logger.h"
+#include "logger.h"
 
-#define INTERFACE_NAME "eth0" // 根據你的網卡名稱修改，例如 "enp0s3" 或 "wlan0"
+#define INTERFACE_NAME "enp5s0" // 根據內部網卡名稱修改
 
 /**
  * 初始化 DHCP UDP Socket
@@ -22,24 +24,41 @@ int init_dhcp_socket() {
     // 1. 建立 UDP Socket
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
         perror("socket");
+        log_message(LOG_ERROR, "Socket creation failed!");
         return -1;
     }
 
     // 2. 允許廣播 (SO_BROADCAST)
     if (setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &broadcast_enable, sizeof(broadcast_enable)) < 0) {
         perror("setsockopt (SO_BROADCAST)");
+        log_message(LOG_ERROR, "Failed to set SO_BROADCAST");
         close(sockfd);
         return -1;
     }
 
-    // 3. 綁定 Port 68
+    // 3. 綁定 Port 67
+    struct ifreq ifr;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, INTERFACE_NAME, IFNAMSIZ - 1);
+    //繼續寫綁定網卡的日誌輸出訊息,不然衝沙小都看不到
+    if(setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, (void *)&ifr, sizeof(ifr)) < 0) {
+        log_message(LOG_ERROR, "Bind to device %s failed! (Are you sudo?)", INTERFACE_NAME);
+        close(sockfd);
+        return -1;
+    }
+
+
+
+
+    //要改成port 67
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(DHCP_CLIENT_PORT);
+    addr.sin_port = htons(DHCP_SERVER_PORT);
     addr.sin_addr.s_addr = INADDR_ANY; // 監聽所有介面
 
     if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         perror("bind");
+        log_message(LOG_ERROR, "Bind to Port 67 failed! (Check if other DHCP server is running)");
         close(sockfd);
         return -1;
     }

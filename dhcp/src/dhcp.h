@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-// --- 基礎常數定義 ---
+// 常數定義
 #define DHCP_SERVER_PORT    67
 #define DHCP_CLIENT_PORT    68
 #define DHCP_MAGIC_COOKIE   0x63825363  // RFC 1497 定義的 Magic Cookie
