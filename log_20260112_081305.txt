@@ -1,0 +1,10 @@
+Mon Jan 12 08:13:05 2026 [INFO] Logger initialized successfully.
+Mon Jan 12 08:13:05 2026 [INFO] DHCP Server started. IP Pool starts from: 192.168.1.200
+Mon Jan 12 08:13:54 2026 [INFO] Detected DHCP DISCOVER FROM CLIENT!
+Mon Jan 12 08:13:54 2026 [INFO] Client MAC Address: 94:dd:f8:46:cf:a1
+Mon Jan 12 08:13:54 2026 [INFO] DHCPOFFER sent (Total Size: 262 bytes)
+Mon Jan 12 08:13:54 2026 [INFO] DHCPOFFER sent to 255.255.255.255:68
+Mon Jan 12 08:13:54 2026 [INFO] Detected DHCP REQUEST FROM CLIENT!
+Mon Jan 12 08:13:54 2026 [INFO] Client MAC Address: 94:dd:f8:46:cf:a1
+Mon Jan 12 08:13:54 2026 [INFO] DHCPACK sent (Total Size: 268 bytes)
+Mon Jan 12 08:13:54 2026 [INFO] DHCPACK sent! IP 192.168.1.200 is now officially leased to Client.

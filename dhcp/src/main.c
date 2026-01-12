@@ -50,6 +50,11 @@ int main(int argc, char *argv[]){
         //使用get_dhcp_option()抓出option 53
         if(get_dhcp_option(&recv_packet, OPT_MSG_TYPE, &msg_type, 1) > 0) {
 
+            //先定義server的IP與Submask與lease_time
+            uint32_t server_ip = inet_addr("192.168.1.1");    //定義伺服器IP為192.168.1.1,變數的類別是32位元變數
+            uint32_t netmask = inet_addr("255.255.255.0");    // 定義網路遮罩為255.255.255.0,變數的類別是32位元變數
+            uint32_t lease_time = htonl(3600);    //// 定義client被分配的租約時間為1hr(3600sec),變數的類別是32位元變數
+
             switch(msg_type) {
 
                 case DHCPDISCOVER: {  //使用在/dhcp/src/network.h定義的#define DHCPDISCOVER 1
@@ -88,9 +93,6 @@ int main(int argc, char *argv[]){
                     *ptr++ = 54;
                     //賦值為4然後往下走1 byte(8bits)
                     *ptr++ = 4;
-                    //提供server的ip
-                    //這邊是使用32bits的變數宣告方式去宣告ipv4的記憶體位址
-                    uint32_t server_ip = inet_addr("192.168.1.1");
                     //使用memory copy記憶體複製的方式從&server_ip開始連續取出4bytes的資料貼到
                     //貼到目前ptr指向的記憶體位置
                     // *ptr = server_ip;要捨棄,是因為ptr是一個byte所以如果馬上在賦值編譯器會把
@@ -105,11 +107,10 @@ int main(int argc, char *argv[]){
                     *ptr++ = 1;    // Type: 1 代表 Subnet Mask
                     //賦值為4然後往下走1 byte(8bits)
                     *ptr++ = 4;    // Length: IP 長度固定是 4 bytes
-                    //這邊是使用4bytes(32bits)的變數宣告方式去宣告Submask的變數記憶體位址
-                    uint32_t mask = inet_addr("255.255.255.0");
+
                     //使用memory copy記憶體複製的方式從&mask開始連續取出4bytes的資料貼到
                     //貼到目前ptr指向的記憶體位置
-                    memcpy(ptr, &mask, 4);
+                    memcpy(ptr, &netmask, 4);
                     //往下走4 bytes(32bits)將指標指向submask變數之後的記憶體位址
                     ptr += 4;
 
@@ -117,8 +118,7 @@ int main(int argc, char *argv[]){
                     *ptr++ = 51;    // Type: 51 代表 IP Address Lease Time
                     //先賦值4再往下1 byte(8bits)
                     *ptr++ = 4;     // Length: 4 bytes
-                    //這邊是使用32bits的變數宣告方式去宣告lease_time的記憶體位址
-                    uint32_t lease_time = htonl(3600); // 租約 1 小時，要轉成網路位元組序
+
                     //使用memory copy記憶體複製的方式從&least_time開始連續取出4bytes的資料貼到
                     //貼到目前ptr指向的記憶體位置
                     memcpy(ptr, &lease_time, 4);
@@ -180,6 +180,101 @@ int main(int argc, char *argv[]){
                     log_message(LOG_INFO, "Client MAC Address: %02x:%02x:%02x:%02x:%02x:%02x",
                 recv_packet.chaddr[0], recv_packet.chaddr[1], recv_packet.chaddr[2],
                 recv_packet.chaddr[3], recv_packet.chaddr[4], recv_packet.chaddr[5]);
+
+                    //檢查Server_Identifier(option 53),確保server找對台
+                    uint32_t requested_server_ip = 0;
+                    if(get_dhcp_option(&recv_packet, 54, &requested_server_ip, sizeof(requested_server_ip))){
+                        //如果Server IP(Server_Identifier(option 53))不一樣,代表client正在呼叫別台DHCP Server
+                        if(requested_server_ip != server_ip){
+                            //顯示日誌:client正在尋找別台DHCP Server並跳出
+                            log_message(LOG_INFO, "DHCPREQUEST is for another server (%s). Ignoring.", inet_ntoa(*(struct in_addr*)&requested_server_ip));
+                            break;
+                        }
+                    }
+
+                    //檢查Requested IP(Option 50)
+                    uint32_t requested_ip = 0;
+                    get_dhcp_option(&recv_packet, 50, &requested_ip, sizeof(requested_ip));
+
+                    //檢查IP的的is_allocated是否=1(代表被分配過了)
+                    //get_assigned_ip()檢查：1. 是否已分配 2. MAC 地址是否完全吻合
+                    uint32_t assigned_ip = get_assigned_ip(recv_packet.chaddr);
+
+                   //如果client要求的IP與IP Pool中記錄不符合
+                    if(requested_ip != 0 && requested_ip != assigned_ip){
+                        //先輸出日誌訊息後續再補nak
+                        log_message(LOG_WARNING, "Client requested wrong IP, Send NAK.");
+                        // Todo: 實作 send_dhcp_nak(sockfd, &recv_packet);
+                        break;
+                    }
+
+                    //如果assigned_ip = 0代表沒有這台client的紀錄
+                    if(assigned_ip == 0){
+                        log_message(LOG_WARNING, "No record for this client, Igoring.");
+                        break;
+                    }
+
+                    //準備發送ACK,初始化DHCPACK封包結構
+                    struct dhcp_packet ack_packet;
+                    memset(&ack_packet, 0, sizeof(ack_packet));
+                    //基本欄位填充
+                    ack_packet.xid = recv_packet.xid; //必須與Request的IP一致
+                    ack_packet.op = 2;    //boot reply
+                    //從之前的 allocate_ip 或資料庫中找出該 MAC 對應的 IP
+                    ack_packet.yiaddr = assigned_ip;    //正式將IP分配給client
+                    memcpy(ack_packet.chaddr, recv_packet.chaddr, 6);
+                    ack_packet.magic_cookie = htonl(DHCP_MAGIC_COOKIE);
+
+                    //填充 Options (TLV 串列)
+                    uint8_t *ptr = ack_packet.options;
+
+                    //Options 53: DHCP Message Type = 5(ACK)
+                    *ptr++ = 53; *ptr++ = 1; *ptr++ = 5;
+
+                    //Option 54: Server Identifier(這台server的ip)
+                    *ptr++ = 54; *ptr++ = 4;
+                    memcpy(ptr, &server_ip, 4);
+                    ptr += 4;
+
+                    //Option 51: Address Release Time
+                    *ptr++ = 51; *ptr++ = 4;
+                    memcpy(ptr, &lease_time, 4);
+                    ptr += 4;
+
+                    //Option 1: Submask
+                    *ptr++ = 1; *ptr++ = 4;
+                    memcpy(ptr, &netmask, 4);
+                    ptr += 4;
+
+                    //Option 3: Router(Default Gateway, Usually is Server IP)
+                    *ptr++ = 3; *ptr++ = 4;
+                    memcpy(ptr, &server_ip, 4);
+                    ptr += 4;
+
+                    //Option 255:End
+                    *ptr++ = 255;
+
+                    //計算 Options 的結束點到封包開頭的總長度,必須把指標都轉成 uint8_t* 才能精確按 byte 相減
+                    ssize_t actual_len = (uint8_t *)ptr - (uint8_t *)&ack_packet;
+                    //紀錄日誌時也可以顯示精確長度
+                    log_message(LOG_INFO, "DHCPACK sent (Total Size: %ld bytes)", actual_len);
+
+                    struct sockaddr_in dest_addr;
+                    memset(&dest_addr, 0, sizeof(dest_addr));
+                    dest_addr.sin_family = AF_INET;
+                    dest_addr.sin_port = htons(DHCP_CLIENT_PORT);
+                    dest_addr.sin_addr.s_addr = INADDR_BROADCAST; //使用廣播進行封包發送
+
+                    ssize_t sen_len = sendto(sockfd, &ack_packet, actual_len, 0,
+                                            (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+
+                    if(sen_len < 0){
+                        log_message(LOG_ERROR, "Failed to send DHCPACK!");
+                    }else {
+                        log_message(LOG_INFO, "DHCPACK sent! IP %s is now officially leased to Client.",
+                                    inet_ntoa(*(struct in_addr*)&assigned_ip));
+                    }
+
                     break;
                 }
             }

@@ -14,4 +14,7 @@ uint32_t allocate_ip(uint8_t *client_mac);
 // 釋放 IP (當收到 DHCPRELEASE 時使用)
 void release_ip(uint32_t ip);
 
+//或許is_allocated = 1的IP (DHCPACK時使用)
+uint32_t get_assigned_ip(uint8_t *client_mac);
+
 #endif

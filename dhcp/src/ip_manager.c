@@ -3,17 +3,17 @@
 #include <string.h>       // 為了使用 memset, memcpy
 #include <stdio.h>
 
-// 1. 定義內部使用的結構體（這部分不用寫在 .h，放在 .c 即可，屬於隱私資料）
+// 定義內部使用的結構體（這部分不用寫在 .h，放在 .c 即可）
 typedef struct {
     uint32_t ip_addr;       // 主機序 (Host Byte Order)
     uint8_t  mac[6];        // 紀錄借給哪個 MAC
     int      is_allocated;  // 狀態：0 = 可用, 1 = 已分配
 } ip_entry_t;
 
-// 2. 建立資源池陣列
+// 建立資源池陣列
 static ip_entry_t ip_pool[POOL_SIZE];
 
-// 3. 實作：初始化資源池
+// 初始化資源池
 void init_ip_pool(const char *start_ip_str) {
     uint32_t start_ip_h = ntohl(inet_addr(start_ip_str));
 
@@ -25,7 +25,7 @@ void init_ip_pool(const char *start_ip_str) {
     printf("IP Pool Initialized: Starting from %s\n", start_ip_str);
 }
 
-// 4. 實作：分配 IP (用於 DHCPOFFER)
+// 分配 IP (用於 DHCPOFFER)
 uint32_t allocate_ip(uint8_t *client_mac) {
     for (int i = 0; i < POOL_SIZE; i++) {
         if (!ip_pool[i].is_allocated) {
@@ -37,7 +37,7 @@ uint32_t allocate_ip(uint8_t *client_mac) {
     return 0; // 池子滿了
 }
 
-// 5. 實作：釋放 IP (用於 DHCPRELEASE)
+// 釋放 IP (用於 DHCPRELEASE)
 void release_ip(uint32_t ip_n) {
     uint32_t ip_h = ntohl(ip_n); // 先轉回主機序好做比較
     for (int i = 0; i < POOL_SIZE; i++) {
@@ -47,4 +47,14 @@ void release_ip(uint32_t ip_n) {
             break;
         }
     }
+}
+// 找尋已經顯示is_allocated = 1的IP
+uint32_t get_assigned_ip(uint8_t *client_mac) {
+    for (int i = 0; i < POOL_SIZE; i++) {
+        // 檢查是否已分配，且 MAC 地址是否吻合
+        if (ip_pool[i].is_allocated && memcmp(ip_pool[i].mac, client_mac, 6) == 0) {
+            return htonl(ip_pool[i].ip_addr); // 找到原本分配的 IP，轉成網路序回傳
+        }
+    }
+    return 0; // 沒找到紀錄
 }
