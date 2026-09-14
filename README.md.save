@@ -44,37 +44,17 @@ cd bin/
 ```
 sudo ./my_dhcp
 ```
-
 - **執行專案**
-- 1. 進入到放置配檔的目錄中
+- 1. 進入到放置配置檔案的目錄中
 ```
 cd etc/
 ```
-- 2. 使用最高權限編輯配置檔案
+- 2. 編輯配置檔案
 ```
 sudo nano dhcp.conf
 ```
-- 3. 將以下內容改成你需要的配置內容
+- 3. 將以下內容調整成你需要的相對應配置
 ```
-# --- Network Interface Settings ---
-# The network interface the DHCP server should listen on (Example: eth0, enp0s3, wlan0)
-interface=enp5s0
 
-# --- IP Address Settings ---
-# The Static IP Addesss Of This DHCP Server.
-server_ip=192.168.1.1
-# Network Submask For Client
-netmask=255.255.255.0
-# Default Gateway (Usually is Server IP)
-router=192.168.1.1
-
-# --- IP Pool Settings ---
-# Start For Allocated IP (Example: Yu can start IP allcation from .200 )
-ip_start=192.168.1.200
-# End Of Allocated IP (Accourding To POOL_SIZE Determines The Range Of IP Allcation )
-ip_end=192.168.1.250
-
-# --- Release Settings ---
-# Release Time (Unit：second)，3600 stands for an hour.
-lease_time=3600
 ```
+
