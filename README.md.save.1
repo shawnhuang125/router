@@ -32,35 +32,59 @@ route/                  # 專案根目錄
 
 - NAT 模組：實作網路位址轉換，提供內外網封包轉發功能。
 
-## 部署說明
 
-### 下載與安裝 (Release 安裝)
+## 部屬說明
 
 1. **取得最新發布檔**
-至 GitHub Releases 下載最新版本的壓縮檔（例如 `Hroute-v1.0.0-linux-x86_64.tar.gz`），並傳輸至目標主機 (Target Machine)。
+   至 GitHub Releases 下載最新版本的壓縮檔（例如 `Hroute-v1.0.0-linux-x86_64.tar.gz`），並傳輸至目標主機。
 
-2. **解壓縮並進入專案目錄**
+2. **解壓縮並進入目錄內部**
 ```
 tar -zxvf Hroute-v1.0.0-linux-x86_64.tar.gz
 cd Hroute-v1.0.0-linux-x86_64/
 ```
 
-3. 配置與執行
-- 調整設定檔
 
-- 進入設定檔目錄，依據網路環境調整參數：
 
-```
-cd etc/
-sudo nano dhcp.conf
-cd ..
-```
-- 執行程式
-
-- 進入執行檔目錄，使用最高權限啟動服務（底層使用 Raw Sockets 監聽封包，需 root 權限）：
-
+- 1. 進入到放執行檔的目錄中
 ```
 cd bin/
+```
+- 2. 使用最高權限執行被編譯好的執行檔
+```
 sudo ./my_dhcp
 ```
-注意：執行時請確認終端機是否成功綁定網卡介面，且設定檔路徑（../etc/dhcp.conf）相對位置正確。
+
+- **執行專案**
+- 1. 進入到放置配檔的目錄中
+```
+cd etc/
+```
+- 2. 使用最高權限編輯配置檔案
+```
+sudo nano dhcp.conf
+```
+- 3. 將以下內容改成你需要的配置內容
+```
+# --- Network Interface Settings ---
+# The network interface the DHCP server should listen on (Example: eth0, enp0s3, wlan0)
+interface=enp5s0
+
+# --- IP Address Settings ---
+# The Static IP Addesss Of This DHCP Server.
+server_ip=192.168.1.1
+# Network Submask For Client
+netmask=255.255.255.0
+# Default Gateway (Usually is Server IP)
+router=192.168.1.1
+
+# --- IP Pool Settings ---
+# Start For Allocated IP (Example: Yu can start IP allcation from .200 )
+ip_start=192.168.1.200
+# End Of Allocated IP (Accourding To POOL_SIZE Determines The Range Of IP Allcation )
+ip_end=192.168.1.250
+
+# --- Release Settings ---
+# Release Time (Unit：second)，3600 stands for an hour.
+lease_time=3600
+```
