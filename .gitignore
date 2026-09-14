@@ -1,0 +1,23 @@
+cat << 'EOF' > .gitignore
+# Binaries and build artifacts
+bin/
+*.o
+*.out
+*.so
+*.a
+
+# Application logs and runtime output
+*.log
+log_*.txt
+
+# Runtime state and temporary files
+var/
+.cache/
+
+# Editor and OS generated files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+EOF
