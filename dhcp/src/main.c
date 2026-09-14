@@ -2,10 +2,10 @@
 #include <arpa/inet.h>
 #include <string.h>    // 為了 memset, memcpy
 #include <stdlib.h>    // 為了 exit() 或其他標準工具
-#include "dhcp.h"
 #include "ip_manager.h"
 #include "../../common/include/logger.h"
-
+#include "config_manager.h"
+#include "protocol.h"
 extern int init_dhcp_socket();
 extern int get_dhcp_option(struct dhcp_packet *packet, uint8_t code, void *out, int max_len);
 
@@ -14,15 +14,36 @@ int main(int argc, char *argv[]){
     init_logger();
     log_message(LOG_INFO, "Logger initialized successfully.");
 
-    const char *start_ip = "192.168.1.200";
-    // 如果用戶執行時有輸入參數，例如: ./dhcp_server 192.168.5.50
+    // 建議：檢查有沒有傳入自定義路徑，如果沒有就用預設的
+    const char *config_path = "etc/dhcp.conf"; 
     if (argc > 1) {
-        start_ip = argv[1];
+        config_path = argv[1]; // 讓你可以用 sudo ./my_dhcp /abs/path/to/conf
     }
 
+    if (load_config(config_path) != 0) {
+        log_message(LOG_ERROR, "Failed to load config from %s", config_path);
+        return 1;
+    }
+
+    // 之後可以直接使用全域變數 config
+    printf("Starting DHCP on %s...\n", config.interface);
+
+    //根據conf檔案的變數宣告要動態配置的起始IP
+    struct in_addr addr;
+    addr.s_addr = config.ip_start;
+    char *start_ip_str = inet_ntoa(addr);
+
     // 初始化 IP Manager
-    init_ip_pool(start_ip);
-    log_message(LOG_INFO, "DHCP Server started. IP Pool starts from: %s", start_ip);
+    init_ip_pool(start_ip_str);
+
+    //讀取IP Release Pool的上一次記憶
+    load_leases(LEASE_FILE_PATH);
+    log_message(LOG_INFO, "DHCP Server started on %s. IP Pool starts from: %s", config.interface, start_ip_str);
+
+    //輸出DHCP模組已啟用
+    printf("Starting DHCP on %s...\n", config.interface);
+    log_message(LOG_INFO, "DHCP Server started on %s. IP Pool starts from: %s",
+                config.interface, start_ip_str);
 
     int sockfd;
     struct dhcp_packet recv_packet;
@@ -38,7 +59,12 @@ int main(int argc, char *argv[]){
     printf("DHCP Server detection is starting..., listed on port 67\n");
 
     while(1){
+        // --- 這裡加入自動檢查過期 ---
+        // 建議實作一個 check_lease_expiration() 放在 ip_manager.c
+        // 它會遍歷 pool，把 now > expire_time 的 IP 標記為 is_allocated = 0
+        check_lease_expiration();
         //printf("Waiting for DHCP packets...\n");
+
         ssize_t n = recvfrom(sockfd, &recv_packet, sizeof(recv_packet), 0,
                              (struct sockaddr *)&client_addr, &addr_len);
         if(n<0){
@@ -51,9 +77,9 @@ int main(int argc, char *argv[]){
         if(get_dhcp_option(&recv_packet, OPT_MSG_TYPE, &msg_type, 1) > 0) {
 
             //先定義server的IP與Submask與lease_time
-            uint32_t server_ip = inet_addr("192.168.1.1");    //定義伺服器IP為192.168.1.1,變數的類別是32位元變數
-            uint32_t netmask = inet_addr("255.255.255.0");    // 定義網路遮罩為255.255.255.0,變數的類別是32位元變數
-            uint32_t lease_time = htonl(3600);    //// 定義client被分配的租約時間為1hr(3600sec),變數的類別是32位元變數
+            uint32_t server_ip = config.server_ip;    //定義伺服器IP為192.168.1.1,變數的類別是32位元變數
+            uint32_t netmask = config.netmask;    // 定義網路遮罩為255.255.255.0,變數的類別是32位元變數
+            uint32_t lease_time = htonl(config.lease_time);    //// 定義client被分配的租約時間為1hr(3600sec),變數的類別是32位元變數
 
             switch(msg_type) {
 
@@ -74,10 +100,14 @@ int main(int argc, char *argv[]){
                         break;
                     }
 
-                    offer_packet.xid = recv_packet.xid;//回傳xid
+
                     offer_packet.op = 2; // 設定訊息類型 (op)DHCP 規範中,1是代表Client寄出的請求(Request),2是代表Server寄出的回應(Reply)
+                    offer_packet.htype = 1;    //// 必須固定為 1 (Ethernet)
+                    offer_packet.hlen = 6;                      // 必須固定為 6
+                    offer_packet.xid = recv_packet.xid;//回傳xid
+
                     offer_packet.yiaddr = offered_ip;//在yiaddr欄位填上藥指定的ip地址
-                    memcpy(offer_packet.chaddr, recv_packet.chaddr, 6);  //複製硬體地址 (chaddr)
+                    memcpy(offer_packet.chaddr, recv_packet.chaddr, 16);  //複製硬體地址 (chaddr)
                     offer_packet.magic_cookie = htonl(DHCP_MAGIC_COOKIE);  //填寫 Magic Cookie
                     //填寫OPTION 53 OFFER告訴CLIENT端這是DHCPDISCOVER的回傳訊息
                     uint8_t *ptr = offer_packet.options;
@@ -102,6 +132,12 @@ int main(int argc, char *argv[]){
                     //將指標指向server_ip變數之後的記憶體位址
                     ptr += 4;
 
+                    // 提供預設網關 (Router - Option 3)
+                    *ptr++ = 3;    // Type: 3 代表 Router
+                    *ptr++ = 4;    // Length: 4 bytes
+                    memcpy(ptr, &config.router, 4); // 確保從 config 讀取 router IP
+                    ptr += 4;
+
                     //提供網路遮罩(network mask)
                     //賦值為1然後往下走1 byte(8bits)
                     *ptr++ = 1;    // Type: 1 代表 Subnet Mask
@@ -124,6 +160,17 @@ int main(int argc, char *argv[]){
                     memcpy(ptr, &lease_time, 4);
                     //往下走4bytes(32bits)將指標指向lease_time變數之後的記憶體位址
                     ptr += 4;
+
+                    //提供dns server(option6)
+                    if (config.dns_count > 0) {
+                        *ptr++ = 6;
+                        *ptr++ = config.dns_count * 4;
+                        for (int i = 0; i < config.dns_count; i++) {
+                            memcpy(ptr, &config.dns_servers[i], 4);
+                            ptr += 4;
+                        }
+                    }
+
                     //先賦值255再往下1 byte(8bits)
                     *ptr++ = 255;   // Option 255: End結束
                     //共計整個TLV串列指標共移動並寫入了22Bytes(176bits)
@@ -181,7 +228,7 @@ int main(int argc, char *argv[]){
                 recv_packet.chaddr[0], recv_packet.chaddr[1], recv_packet.chaddr[2],
                 recv_packet.chaddr[3], recv_packet.chaddr[4], recv_packet.chaddr[5]);
 
-                    //檢查Server_Identifier(option 53),確保server找對台
+                    //檢查Server_Identifier(option 54),確保server找對台
                     uint32_t requested_server_ip = 0;
                     if(get_dhcp_option(&recv_packet, 54, &requested_server_ip, sizeof(requested_server_ip))){
                         //如果Server IP(Server_Identifier(option 53))不一樣,代表client正在呼叫別台DHCP Server
@@ -192,27 +239,57 @@ int main(int argc, char *argv[]){
                         }
                     }
 
-                    //檢查Requested IP(Option 50)
-                    uint32_t requested_ip = 0;
-                    get_dhcp_option(&recv_packet, 50, &requested_ip, sizeof(requested_ip));
 
                     //檢查IP的的is_allocated是否=1(代表被分配過了)
                     //get_assigned_ip()檢查：1. 是否已分配 2. MAC 地址是否完全吻合
                     uint32_t assigned_ip = get_assigned_ip(recv_packet.chaddr);
 
-                   //如果client要求的IP與IP Pool中記錄不符合
-                    if(requested_ip != 0 && requested_ip != assigned_ip){
-                        //先輸出日誌訊息後續再補nak
-                        log_message(LOG_WARNING, "Client requested wrong IP, Send NAK.");
-                        // Todo: 實作 send_dhcp_nak(sockfd, &recv_packet);
+                    //檢查Requested IP(Option 50)
+                    uint32_t requested_ip = 0;
+                    get_dhcp_option(&recv_packet, 50, &requested_ip, sizeof(requested_ip));
+
+                    // 3. 如果 Option 50 沒抓到，檢查 ciaddr (封包頭部)
+                    if (requested_ip == 0 && recv_packet.ciaddr != 0) {
+                        requested_ip = recv_packet.ciaddr;
+                    }
+
+                    printf("DEBUG: Requested_IP_HEX = 0x%08X\n", requested_ip);
+                    printf("DEBUG: Assigned_IP_HEX  = 0x%08X\n", assigned_ip);
+
+                    //如果client要求的IP與IP Pool中記錄不符合
+                    // 1. 檢查是否真的有分配紀錄
+                    if (assigned_ip == 0) {
+                        log_message(LOG_WARNING, "assigned_ip is ZERO! record not found.");
+                        send_dhcp_nak(sockfd, &recv_packet, &client_addr);
                         break;
                     }
 
-                    //如果assigned_ip = 0代表沒有這台client的紀錄
-                    if(assigned_ip == 0){
-                        log_message(LOG_WARNING, "No record for this client, Igoring.");
-                        break;
+                    if (requested_ip != 0) {
+                        // 1. 將抓到的 requested_ip 統一視為網路序，轉成主機序
+                        uint32_t req_host = ntohl(requested_ip);
+
+                        // 2. 將 Pool 裡的 assigned_ip 統一視為網路序，轉成主機序
+                        uint32_t ass_host = ntohl(assigned_ip);
+
+                        // 3. 進行比較
+                        if (req_host != ass_host) {
+                            // 如果兩者轉成人類易讀的主機序後仍不相等，才代表 IP 真的不符
+                            log_message(LOG_WARNING, "IP Mismatch! Client asked for %s, but Pool says %s",
+                                        inet_ntoa(*(struct in_addr*)&requested_ip),
+                                        inet_ntoa(*(struct in_addr*)&assigned_ip));
+                            // 【關鍵優化】如果發現抓到的 IP 根本不在你的網段內 (例如 192.168.1.x)
+                            // 則高機率是解析器 Offset 錯誤，這時「不要」發送 NAK，直接發 ACK 給正確的 IP
+                            if ((req_host & 0xFFFFFF00) != (ass_host & 0xFFFFFF00)) {
+                                log_message(LOG_ERROR, "Requested IP looks like garbage due to parsing error. Bypassing NAK.");
+                            } else {
+                                // 只有當要求的是同網段但不同 IP 時，才發 NAK
+                                send_dhcp_nak(sockfd, &recv_packet, &client_addr);
+                                return; // 或 break
+                            }
+                        }
                     }
+                    // C. 如果一切正常 (requested_ip == assigned_ip 或續約流程)
+                    log_message(LOG_INFO, "Validation Passed! Sending ACK.");
 
                     //準備發送ACK,初始化DHCPACK封包結構
                     struct dhcp_packet ack_packet;
@@ -220,8 +297,11 @@ int main(int argc, char *argv[]){
                     //基本欄位填充
                     ack_packet.xid = recv_packet.xid; //必須與Request的IP一致
                     ack_packet.op = 2;    //boot reply
+                    ack_packet.htype = 1;  // 確保是 1
+                    ack_packet.hlen = 6;   // 確保是 6
+
                     //從之前的 allocate_ip 或資料庫中找出該 MAC 對應的 IP
-                    ack_packet.yiaddr = assigned_ip;    //正式將IP分配給client
+                    ack_packet.yiaddr = htonl(assigned_ip);    //正式將IP分配給client
                     memcpy(ack_packet.chaddr, recv_packet.chaddr, 6);
                     ack_packet.magic_cookie = htonl(DHCP_MAGIC_COOKIE);
 
@@ -238,7 +318,8 @@ int main(int argc, char *argv[]){
 
                     //Option 51: Address Release Time
                     *ptr++ = 51; *ptr++ = 4;
-                    memcpy(ptr, &lease_time, 4);
+                    uint32_t lease_time_net = htonl(lease_time); // 轉為網路序
+                    memcpy(ptr, &lease_time_net, 4);
                     ptr += 4;
 
                     //Option 1: Submask
@@ -250,6 +331,16 @@ int main(int argc, char *argv[]){
                     *ptr++ = 3; *ptr++ = 4;
                     memcpy(ptr, &server_ip, 4);
                     ptr += 4;
+
+                    //Option 6: DNS Server
+                    if (config.dns_count > 0) {
+                        *ptr++ = 6;                          // Type: DNS
+                        *ptr++ = config.dns_count * 4;       // Length: 4 * DNS 數量
+                        for (int i = 0; i < config.dns_count; i++) {
+                            memcpy(ptr, &config.dns_servers[i], 4);
+                            ptr += 4;
+                        }
+                    }
 
                     //Option 255:End
                     *ptr++ = 255;
@@ -271,12 +362,37 @@ int main(int argc, char *argv[]){
                     if(sen_len < 0){
                         log_message(LOG_ERROR, "Failed to send DHCPACK!");
                     }else {
-                        log_message(LOG_INFO, "DHCPACK sent! IP %s is now officially leased to Client.",
-                                    inet_ntoa(*(struct in_addr*)&assigned_ip));
+                        // 1. 宣告變數 (確保這行存在)
+                        struct in_addr leased_addr;
+
+                        // 2. 賦值 (把 print_addr 改成 leased_addr)
+                        leased_addr.s_addr = ack_packet.yiaddr;
+
+                        // 3. 列印 Log (同樣改成 leased_addr)
+                        log_message(LOG_INFO, "DHCPACK sent! IP %s is now officially leased to Client.", inet_ntoa(leased_addr));
                     }
+
+                    //分配成功後立刻存檔
+                    save_leases(LEASE_FILE_PATH);
 
                     break;
                 }
+                case DHCPRELEASE: {
+                    log_message(LOG_INFO, "Detected DHCP RELEASE FROM CLIENT!");
+
+                    // 根據 RFC，釋放的 IP 放在 ciaddr
+                    uint32_t ip_to_release = recv_packet.ciaddr;
+
+                    if (ip_to_release != 0) {
+                        release_ip(ip_to_release); // 呼叫 ip_manager 的回收函數
+                        // 如果有實作 save_leases()，要在這裡存檔到 lease.db
+                        // save_leases(); 
+                        log_message(LOG_INFO, "IP %s has been recovered to pool.", 
+                                    inet_ntoa(*(struct in_addr*)&ip_to_release));
+                    }
+                    break;
+                }
+
             }
         }
 

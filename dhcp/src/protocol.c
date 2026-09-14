@@ -1,8 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <arpa/inet.h>
-#include "dhcp.h"
-
+#include "protocol.h"
 /**
  * 從 DHCP Options 區域中提取特定的 Option 數值
  * @param packet 指向收到的 DHCP 封包
@@ -12,6 +11,7 @@
  * @return 實際讀取的長度，若未找到則回傳 0
  */
 int get_dhcp_option(struct dhcp_packet *packet, uint8_t code, void *out, int max_len) {
+    printf("DEBUG: Packet Magic Cookie = 0x%08X\n", ntohl(packet->magic_cookie));
     uint8_t *curr = packet->options;
     uint8_t *end = packet->options + sizeof(packet->options);
 
@@ -39,153 +39,65 @@ int get_dhcp_option(struct dhcp_packet *packet, uint8_t code, void *out, int max
     return 0; // 未找到
 }
 
-/**
- * 填充一個基礎的 DHCP 封包 Header
- */
-void fill_common_header(struct dhcp_packet *packet, struct dhcp_client *client) {
-    memset(packet, 0, sizeof(struct dhcp_packet));
-    
-    packet->op = 1;              // BOOTREQUEST
-    packet->htype = 1;           // Ethernet
-    packet->hlen = 6;            // MAC Length
-    packet->xid = client->xid;   // 使用 client 結構中的交易 ID
-    memcpy(packet->chaddr, client->mac_addr, 6);
-    packet->magic_cookie = htonl(DHCP_MAGIC_COOKIE);
-}
+//發送NAK封包:在CLIENT要續約IP RELEASE TIME的時候
+void send_dhcp_nak(int sockfd, struct dhcp_packet *client_pkt, struct sockaddr_in *client_addr) {
+    struct dhcp_packet nak_pkt;
+    memset(&nak_pkt, 0, sizeof(nak_pkt));
 
-/**
- * 建立並發送 DHCPDISCOVER
- */
-void send_dhcp_discover(int fd, struct dhcp_client *client) {
-    struct dhcp_packet packet;
-    fill_common_header(&packet, client);
+    // 1. 基本標頭設定
+    nak_pkt.op = 2;              // Boot Reply
+    nak_pkt.htype = 1;           // Ethernet
+    nak_pkt.hlen = 6;
+    nak_pkt.xid = client_pkt->xid; // 必須與 Client 發過來的一致
+    memcpy(nak_pkt.chaddr, client_pkt->chaddr, 6);
+    nak_pkt.magic_cookie = htonl(0x63825363);
 
-    uint8_t *opt = packet.options;
+    // 2. DHCP Options
+    uint8_t *ptr = nak_pkt.options;
 
-    // Option 53: DHCP Message Type = DISCOVER
-    *opt++ = OPT_MSG_TYPE;
-    *opt++ = 1;
-    *opt++ = DHCPDISCOVER;
+    // Option 53: DHCP Message Type = 6 (NAK)
+    *ptr++ = 53; *ptr++ = 1; *ptr++ = 6;
 
-    // Option 55: Parameter Request List (請求子網遮罩、路由、DNS)
-    *opt++ = OPT_PARAMETER_REQ;
-    *opt++ = 3; 
-    *opt++ = OPT_SUBNET_MASK;
-    *opt++ = OPT_ROUTER;
-    *opt++ = OPT_DNS_SERVER;
+    // Option 54: Server Identifier (Server本身的IP)
+    *ptr++ = 54; *ptr++ = 4;
+    memcpy(ptr, &config.server_ip, 4);
+    ptr += 4;
 
-    // 結束標記
-    *opt++ = OPT_END;
+    // Option 56: Message (告訴 Client 為什麼被拒絕，選配)
+    const char *msg = "Requested IP not available";
+    uint8_t msg_len = strlen(msg);
+    *ptr++ = 56; *ptr++ = msg_len;
+    memcpy(ptr, msg, msg_len);
+    ptr += msg_len;
 
-    // 設定發送目標 (廣播位址)
-    struct sockaddr_in dest;
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(DHCP_SERVER_PORT);
-    dest.sin_addr.s_addr = INADDR_BROADCAST; // 255.255.255.255
+    // End Option
+    *ptr++ = 255;
 
-    sendto(fd, &packet, sizeof(packet), 0, (struct sockaddr *)&dest, sizeof(dest));
-}
-/**
- * 建立並發送 DHCPREQUEST
- */
-void send_dhcp_request(int fd, struct dhcp_client *client) {
-    struct dhcp_packet packet;
-    fill_common_header(&packet, client); // 使用相同的 xid 和 MAC
+    //計算長度
+    ssize_t actual_len = (uint8_t *)ptr - (uint8_t *)&nak_pkt;
+    //設定廣播目的地資訊 (關鍵修改處)
+    struct sockaddr_in broadcast_addr;
+    memset(&broadcast_addr, 0, sizeof(broadcast_addr));
+    broadcast_addr.sin_family = AF_INET;
+    broadcast_addr.sin_port = htons(68);
+    broadcast_addr.sin_addr.s_addr = INADDR_BROADCAST;
 
-    uint8_t *opt = packet.options;
+    // 發送封包 (廣播)
+    int broadcastPermission = 1;
+    setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &broadcastPermission, sizeof(broadcastPermission));
 
-    // 1. Option 53: Message Type = REQUEST
-    *opt++ = OPT_MSG_TYPE;
-    *opt++ = 1;
-    *opt++ = DHCPREQUEST;
-
-    // 2. Option 54: Server Identifier (必須！告訴其他 Server 釋放 IP)
-    *opt++ = OPT_SERVER_ID;
-    *opt++ = 4;
-    memcpy(opt, &client->selected_server_ip, 4);
-    opt += 4;
-
-    // 3. Option 50: Requested IP Address (必須！指定要租哪個 IP)
-    *opt++ = OPT_REQUESTED_IP;
-    *opt++ = 4;
-    memcpy(opt, &client->offered_ip, 4);
-    opt += 4;
-
-    // 4. Option 55: Parameter Request List (同樣請求基本參數)
-    *opt++ = OPT_PARAMETER_REQ;
-    *opt++ = 3; 
-    *opt++ = OPT_SUBNET_MASK;
-    *opt++ = OPT_ROUTER;
-    *opt++ = OPT_DNS_SERVER;
-
-    // 結束標記
-    *opt++ = OPT_END;
-
-    // 設定發送目標 (依然使用廣播 255.255.255.255)
-    struct sockaddr_in dest;
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(DHCP_SERVER_PORT);
-    dest.sin_addr.s_addr = INADDR_BROADCAST;
-
-    printf("Sending DHCPREQUEST for IP %s to Server %s...\n", 
-           inet_ntoa(*(struct in_addr *)&client->offered_ip),
-           inet_ntoa(*(struct in_addr *)&client->selected_server_ip));
-
-    sendto(fd, &packet, sizeof(packet), 0, (struct sockaddr *)&dest, sizeof(dest));
-}
-void handle_timeout(int fd, struct dhcp_client *client) {
-    client->retry_count++;
-    if (client->retry_count > 4) {
-        printf("Too many retries, resetting to INIT...\n");
-        client->state = STATE_INIT;
-        client->retry_count = 0;
-        send_dhcp_discover(fd, client);
+    //發送封包
+    ssize_t sent_len = sendto(sockfd, &nak_pkt, actual_len, 0, 
+                              (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+    //確認廣播封包的發送狀態
+    if (sent_len < 0) {
+        log_message(LOG_ERROR, "Failed to broadcast DHCPNAK!");
     } else {
-        if (client->state == STATE_SELECTING) {
-            send_dhcp_discover(fd, client);
-        } else if (client->state == STATE_REQUESTING) {
-            send_dhcp_request(fd, client);
-        }
+        log_message(LOG_INFO, "DHCPNAK broadcasted to 255.255.255.255 (Size: %ld bytes)", sent_len);
     }
-}
-/**
- * 建立並發送 DHCPDECLINE (當 ARP 檢查發現 IP 衝突時)
- */
-void send_dhcp_decline(int fd, struct dhcp_client *client) {
-    struct dhcp_packet packet;
-    fill_common_header(&packet, client);
 
-    uint8_t *opt = packet.options;
-
-    // 1. Option 53: Message Type = DECLINE
-    *opt++ = OPT_MSG_TYPE;
-    *opt++ = 1;
-    *opt++ = DHCPDECLINE;
-
-    // 2. Option 54: Server Identifier
-    *opt++ = OPT_SERVER_ID;
-    *opt++ = 4;
-    memcpy(opt, &client->selected_server_ip, 4);
-    opt += 4;
-
-    // 3. Option 50: Requested IP Address (告訴 Server 哪個 IP 不能用)
-    *opt++ = OPT_REQUESTED_IP;
-    *opt++ = 4;
-    memcpy(opt, &client->offered_ip, 4);
-    opt += 4;
-
-    // 結束標記
-    *opt++ = OPT_END;
-
-    // 設定發送目標 (廣播)
-    struct sockaddr_in dest;
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(DHCP_SERVER_PORT);
-    dest.sin_addr.s_addr = INADDR_BROADCAST;
-
-    printf("IP %s is in use! Sending DHCPDECLINE to Server...\n", 
-           inet_ntoa(*(struct in_addr *)&client->offered_ip));
-
-    sendto(fd, &packet, sizeof(packet), 0, (struct sockaddr *)&dest, sizeof(dest));
+    log_message(LOG_INFO, "DHCPNAK sent to Client %02x:%02x:%02x:%02x:%02x:%02x",
+                client_pkt->chaddr[0], client_pkt->chaddr[1], client_pkt->chaddr[2],
+                client_pkt->chaddr[3], client_pkt->chaddr[4], client_pkt->chaddr[5]);
 }
 

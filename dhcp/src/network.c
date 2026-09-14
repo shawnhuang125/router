@@ -7,11 +7,11 @@
 #include <net/if.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include "dhcp.h"
 #include "../../common/include/logger.h"
 #include "logger.h"
+#include "config_manager.h"
+#include "protocol.h"
 
-#define INTERFACE_NAME "enp5s0" // 根據內部網卡名稱修改
 
 /**
  * 初始化 DHCP UDP Socket
@@ -39,10 +39,10 @@ int init_dhcp_socket() {
     // 3. 綁定 Port 67
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
-    strncpy(ifr.ifr_name, INTERFACE_NAME, IFNAMSIZ - 1);
+    strncpy(ifr.ifr_name, config.interface, IFNAMSIZ - 1); // 這裡改用 config.interface
     //繼續寫綁定網卡的日誌輸出訊息,不然衝沙小都看不到
     if(setsockopt(sockfd, SOL_SOCKET, SO_BINDTODEVICE, (void *)&ifr, sizeof(ifr)) < 0) {
-        log_message(LOG_ERROR, "Bind to device %s failed! (Are you sudo?)", INTERFACE_NAME);
+        log_message(LOG_ERROR, "Bind to device %s failed! (Are you sudo?)", config.interface);
         close(sockfd);
         return -1;
     }
@@ -76,7 +76,7 @@ int get_my_mac(uint8_t *mac) {
     if (fd < 0) return -1;
 
     ifr.ifr_addr.sa_family = AF_INET;
-    strncpy(ifr.ifr_name, INTERFACE_NAME, IFNAMSIZ - 1);
+    strncpy(ifr.ifr_name, config.interface, IFNAMSIZ - 1);
 
     // 使用 ioctl 獲取硬體位址 (SIOCGIFHWADDR)
     if (ioctl(fd, SIOCGIFHWADDR, &ifr) < 0) {
@@ -118,11 +118,11 @@ int apply_network_config(struct dhcp_client *client) {
 
     // 1. 設定 IP 與 子網遮罩 (例如: ip addr add 192.168.1.10/24 dev eth0)
     // 這裡需要算遮罩長度，簡易做法可用 ifconfig
-    sprintf(cmd, "sudo ifconfig %s %s netmask %s up", INTERFACE_NAME, ip_str, mask_str);
+    sprintf(cmd, "sudo ifconfig %s %s netmask %s up", config.interface, ip_str, mask_str);
     system(cmd);
 
     // 2. 設定預設網關 (Default Gateway)
-    sprintf(cmd, "sudo route add default gw %s %s", gw_str, INTERFACE_NAME);
+    sprintf(cmd, "sudo route add default gw %s %s", gw_str, config.interface);
     system(cmd);
 
     // 3. 設定 DNS (寫入 /etc/resolv.conf)

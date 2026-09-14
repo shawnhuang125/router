@@ -1,11 +1,22 @@
-#ifndef DHCP_H
-#define DHCP_H
+#ifndef PROTOCOL_H
+#define PROTOCOL_H
 
 #include <stdint.h>
+#include <netinet/in.h>
+#include "config_manager.h" // 為了使用 config 變數
+#include <time.h>
+#include <stdint.h>
+#include "logger.h"
 
-// 常數定義
-#define DHCP_SERVER_PORT    67
-#define DHCP_CLIENT_PORT    68
+// 聚集
+#ifndef DHCP_SERVER_PORT
+#define DHCP_SERVER_PORT 67
+#endif
+
+#ifndef DHCP_CLIENT_PORT
+#define DHCP_CLIENT_PORT 68
+#endif
+
 #define DHCP_MAGIC_COOKIE   0x63825363  // RFC 1497 定義的 Magic Cookie
 
 // DHCP 訊息類型 (Option 53 的數值)
@@ -51,7 +62,6 @@ struct dhcp_packet {
     uint8_t  options[308];  // 選項區域 (最小長度要求，通常設為 308 以達總長 576 bytes)
 } __attribute__((packed));
 
-// --- 客戶端狀態機定義 ---
 typedef enum {
     STATE_INIT,
     STATE_SELECTING,
@@ -66,19 +76,26 @@ struct dhcp_client {
     uint32_t xid;                   // 當前交易 ID
     uint8_t  mac_addr[6];           // 自己的 MAC
     dhcp_state_t state;             // 當前狀態
-    
+
     // 從 Server 取得的資訊
     uint32_t offered_ip;            // yiaddr
     uint32_t selected_server_ip;    // Option 54: Server Identifier
     uint32_t netmask;               // Option 1
     uint32_t gateway;               // Option 3
     uint32_t lease_time;            // Option 51
-    
+
     // 重傳控制
     uint16_t secs;
     int      retry_count;
     time_t   last_transmit;
 };
 
-#endif // DHCP_H
+// 函式宣告
+void send_dhcp_nak(int sockfd, struct dhcp_packet *client_pkt, struct sockaddr_in *client_addr);
+//void handle_timeout(int fd, struct dhcp_client *client);
+int get_dhcp_option(struct dhcp_packet *packet, uint8_t code, void *out, int max_len);
+//void send_dhcp_discover(int fd, struct dhcp_client *client);
+//void send_dhcp_request(int fd, struct dhcp_client *client);
+void fill_common_header(struct dhcp_packet *packet, struct dhcp_client *client);
 
+#endif
