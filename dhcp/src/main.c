@@ -99,127 +99,9 @@ int main(int argc, char *argv[]){
                         log_message(LOG_ERROR, "No IP addresses left in the pool!");
                         break;
                     }
+                    //發送OFFER封包
+                    send_dhcp_offer(sockfd, &recv_packet, offered_ip);
 
-
-                    offer_packet.op = 2; // 設定訊息類型 (op)DHCP 規範中,1是代表Client寄出的請求(Request),2是代表Server寄出的回應(Reply)
-                    offer_packet.htype = 1;    //// 必須固定為 1 (Ethernet)
-                    offer_packet.hlen = 6;                      // 必須固定為 6
-                    offer_packet.xid = recv_packet.xid;//回傳xid
-
-                    offer_packet.yiaddr = offered_ip;//在yiaddr欄位填上藥指定的ip地址
-                    memcpy(offer_packet.chaddr, recv_packet.chaddr, 16);  //複製硬體地址 (chaddr)
-                    offer_packet.magic_cookie = htonl(DHCP_MAGIC_COOKIE);  //填寫 Magic Cookie
-                    //填寫OPTION 53 OFFER告訴CLIENT端這是DHCPDISCOVER的回傳訊息
-                    uint8_t *ptr = offer_packet.options;
-                    // Message Type: OFFER
-                    //先把第0格然後賦值為53然後往下走1 byte(8bits)
-                    *ptr++ = 53;
-                    //賦值為1然後往下走1 byte(8bits)
-                    *ptr++ = 1;
-                    //賦值為2然後往下走1 byte(8bits)
-                    *ptr++ = 2;
-                    //這裡是Server Identifier
-                    //賦值為54然後往下走1 byte(8bits)
-                    *ptr++ = 54;
-                    //賦值為4然後往下走1 byte(8bits)
-                    *ptr++ = 4;
-                    //使用memory copy記憶體複製的方式從&server_ip開始連續取出4bytes的資料貼到
-                    //貼到目前ptr指向的記憶體位置
-                    // *ptr = server_ip;要捨棄,是因為ptr是一個byte所以如果馬上在賦值編譯器會把
-                    //&server_ip的後3bytes複寫掉
-                    memcpy(ptr, &server_ip, 4);
-                    //一次往後移動4bytes(32bits)跳過剛剛寫入的ipv4的資料的記憶體位址避免下次複寫
-                    //將指標指向server_ip變數之後的記憶體位址
-                    ptr += 4;
-
-                    // 提供預設網關 (Router - Option 3)
-                    *ptr++ = 3;    // Type: 3 代表 Router
-                    *ptr++ = 4;    // Length: 4 bytes
-                    memcpy(ptr, &config.router, 4); // 確保從 config 讀取 router IP
-                    ptr += 4;
-
-                    //提供網路遮罩(network mask)
-                    //賦值為1然後往下走1 byte(8bits)
-                    *ptr++ = 1;    // Type: 1 代表 Subnet Mask
-                    //賦值為4然後往下走1 byte(8bits)
-                    *ptr++ = 4;    // Length: IP 長度固定是 4 bytes
-
-                    //使用memory copy記憶體複製的方式從&mask開始連續取出4bytes的資料貼到
-                    //貼到目前ptr指向的記憶體位置
-                    memcpy(ptr, &netmask, 4);
-                    //往下走4 bytes(32bits)將指標指向submask變數之後的記憶體位址
-                    ptr += 4;
-
-                    //先賦值51再往下1 byte(8bits)
-                    *ptr++ = 51;    // Type: 51 代表 IP Address Lease Time
-                    //先賦值4再往下1 byte(8bits)
-                    *ptr++ = 4;     // Length: 4 bytes
-
-                    //使用memory copy記憶體複製的方式從&least_time開始連續取出4bytes的資料貼到
-                    //貼到目前ptr指向的記憶體位置
-                    memcpy(ptr, &lease_time, 4);
-                    //往下走4bytes(32bits)將指標指向lease_time變數之後的記憶體位址
-                    ptr += 4;
-
-                    //提供dns server(option6)
-                    if (config.dns_count > 0) {
-                        *ptr++ = 6;
-                        *ptr++ = config.dns_count * 4;
-                        for (int i = 0; i < config.dns_count; i++) {
-                            memcpy(ptr, &config.dns_servers[i], 4);
-                            ptr += 4;
-                        }
-                    }
-
-                    //先賦值255再往下1 byte(8bits)
-                    *ptr++ = 255;   // Option 255: End結束
-                    //共計整個TLV串列指標共移動並寫入了22Bytes(176bits)
-
-
-                    //在預設情況下,系統是不允許一個程式隨便發送廣播(Broadcast)封包
-                    // 設定發送廣播封包的權限,broadcastPermission=1,代表 ON 開啟
-                    int broadcastPermission = 1;
-                    //這是一個 Linux/Unix 系統內建的標準Socket API,它屬於 BSD Socket 介面
-                    //sockfd:你要設定哪一個 Socket
-                    //SOL_SOCKET:設定的層級。這代表你要設定的是(通用 Socket 層)的選項
-                    //而不是特定於 TCP 或 IP 層的設定
-                    //SO_BROADCAST:這是你要開啟的功能名稱。它的意思是開啟發送廣播封包的權限
-                    //&broadcastPermission:這是一個指標,指向你想要設定的值
-                    //Server的OFFER(也就是程式要發出的封包)要用廣播發出(發送到 255.255.255.255)
-                    //這樣網段內還沒有 IP 的 Client 才能收到。
-                    setsockopt(sockfd, SOL_SOCKET, SO_BROADCAST, &broadcastPermission, sizeof(broadcastPermission));    //發送OFFER封包
-                    //準備目的地地址資訊
-                    //這是Linux用來儲存網路位址資訊的標準結構體
-                    struct sockaddr_in dest_addr;
-                    //
-                    memset(&dest_addr, 0, sizeof(dest_addr));
-                    // AF_INET:告訴系統要使用IPv4通訊協定
-                    dest_addr.sin_family = AF_INET;
-                    //htons(DHCP_CLIENT_PORT):設定目的地的Port
-                    //htons:(Host to Network Short)把數字轉成網路位元組序,確保大端序(Big-Endian)正確
-                    dest_addr.sin_port = htons(DHCP_CLIENT_PORT);
-                    //INADDR_BROADCAST:這是系統定義的常數,代表255.255.255.255
-                    //這封信是廣播給網段內的所有人,因為Client目前還沒有IP,只能透過廣播接收
-                    dest_addr.sin_addr.s_addr = INADDR_BROADCAST;
-                    //計算 Options 的結束點到封包開頭的總長度,必須把指標都轉成 uint8_t* 才能精確按 byte 相減
-                    ssize_t actual_len = (uint8_t *)ptr - (uint8_t *)&offer_packet;
-                    //紀錄日誌時也可以顯示精確長度
-                    log_message(LOG_INFO, "DHCPOFFER sent (Total Size: %ld bytes)", actual_len);
-                    //這是 UDP 通訊的核心 API，它不需要像 TCP 那樣先建立連線，直接把封包丟向目的地
-                    //&offer_packet: 要寄出的資料開頭。
-                    //sizeof(offer_packet): 這是一個小細節
-                    //目前是把整個結構體的大小包含後面沒用到的空白Padding都寄出去
-                    //(struct sockaddr *)&dest_addr: 把剛剛準備好的信封傳進去，告訴系統要寄到哪裡
-                    //使用計算出的 actual_len 發送
-                    ssize_t sent_len = sendto(sockfd, &offer_packet, actual_len, 0,
-                         (struct sockaddr *)&dest_addr, sizeof(dest_addr));
-                    //sent_len < 0:如果發送失敗,可能忘記開啟 SO_BROADCAST 權限，或者網卡沒插線那sendto 會回傳 -1
-                    if (sent_len < 0) {
-                        log_message(LOG_ERROR, "Failed to send DHCPOFFER!");
-                    } else {
-                        log_message(LOG_INFO, "DHCPOFFER sent to 255.255.255.255:68");
-                    }
-                    //收到一個 DISCOVER,成功發送OFFER,任務完成,跳出switch
                     break;
                 }
                 case DHCPREQUEST: {  //使用在/dhcp/src/network.h定義的#define DHCPREQUEST 3
@@ -245,49 +127,72 @@ int main(int argc, char *argv[]){
                     uint32_t assigned_ip = get_assigned_ip(recv_packet.chaddr);
 
                     //檢查Requested IP(Option 50)
-                    uint32_t requested_ip = 0;
-                    get_dhcp_option(&recv_packet, 50, &requested_ip, sizeof(requested_ip));
+                    struct in_addr req_addr = {0};
+                    int opt50_len = get_dhcp_option(&recv_packet, 50, &req_addr.s_addr, sizeof(req_addr.s_addr));
 
-                    // 3. 如果 Option 50 沒抓到，檢查 ciaddr (封包頭部)
-                    if (requested_ip == 0 && recv_packet.ciaddr != 0) {
-                        requested_ip = recv_packet.ciaddr;
+                    // 2. 如果沒 Option 50，檢查 ciaddr (封包頭部)
+                    if (opt50_len <= 0 && recv_packet.ciaddr != 0) {
+                        req_addr.s_addr = recv_packet.ciaddr;
                     }
 
-                    printf("DEBUG: Requested_IP_HEX = 0x%08X\n", requested_ip);
+                    // 自動判定是否為倒裝的 IP
+                    // config.netmask 與 config.server_ip 皆為網路序
+                    normalize_requested_ip(&req_addr, config.netmask, (config.server_ip & config.netmask));
+
+                    // 3. Pool 裡的 assigned_ip 是主機序 (0xC0A801CA)，轉為網路序放進 struct
+                    struct in_addr ass_addr = {0};
+                    ass_addr.s_addr = htonl(assigned_ip);
+
+                    // 印出 Hex 觀察
+                    printf("DEBUG: Requested_IP_HEX = 0x%08X\n", ntohl(req_addr.s_addr));
                     printf("DEBUG: Assigned_IP_HEX  = 0x%08X\n", assigned_ip);
 
-                    //如果client要求的IP與IP Pool中記錄不符合
-                    // 1. 檢查是否真的有分配紀錄
+                    // 4. 檢查是否有分配紀錄
                     if (assigned_ip == 0) {
                         log_message(LOG_WARNING, "assigned_ip is ZERO! record not found.");
                         send_dhcp_nak(sockfd, &recv_packet, &client_addr);
                         break;
                     }
 
-                    if (requested_ip != 0) {
-                        // 1. 將抓到的 requested_ip 統一視為網路序，轉成主機序
-                        uint32_t req_host = ntohl(requested_ip);
+                    // 5. 比對 IP (直接比對 s_addr 二進位值)
+                    // 轉為可讀字串 (供日誌使用)
+                    // 1. 轉成字串
+                    char req_str[INET_ADDRSTRLEN] = {0};
+                    char ass_str[INET_ADDRSTRLEN] = {0};
+                    inet_ntop(AF_INET, &req_addr, req_str, sizeof(req_str));
+                    inet_ntop(AF_INET, &ass_addr, ass_str, sizeof(ass_str));
 
-                        // 2. 將 Pool 裡的 assigned_ip 統一視為網路序，轉成主機序
-                        uint32_t ass_host = ntohl(assigned_ip);
+                    // 2. 檢查是否有分配紀錄
+                    if (assigned_ip == 0) {
+                        log_message(LOG_WARNING, "assigned_ip is ZERO! record not found.");
+                        send_dhcp_nak(sockfd, &recv_packet, &client_addr);
+                        break;
+                    }
 
-                        // 3. 進行比較
-                        if (req_host != ass_host) {
-                            // 如果兩者轉成人類易讀的主機序後仍不相等，才代表 IP 真的不符
-                            log_message(LOG_WARNING, "IP Mismatch! Client asked for %s, but Pool says %s",
-                                        inet_ntoa(*(struct in_addr*)&requested_ip),
-                                        inet_ntoa(*(struct in_addr*)&assigned_ip));
-                            // 【關鍵優化】如果發現抓到的 IP 根本不在你的網段內 (例如 192.168.1.x)
-                            // 則高機率是解析器 Offset 錯誤，這時「不要」發送 NAK，直接發 ACK 給正確的 IP
-                            if ((req_host & 0xFFFFFF00) != (ass_host & 0xFFFFFF00)) {
-                                log_message(LOG_ERROR, "Requested IP looks like garbage due to parsing error. Bypassing NAK.");
-                            } else {
-                                // 只有當要求的是同網段但不同 IP 時，才發 NAK
-                                send_dhcp_nak(sockfd, &recv_packet, &client_addr);
-                                return; // 或 break
+                    // 3. 比對 IP：若不吻合，檢查是否能順應client端
+                    if (req_addr.s_addr != 0 && req_addr.s_addr != ass_addr.s_addr) {
+                        uint32_t req_ip_host = ntohl(req_addr.s_addr);
+
+                        // 判斷客戶端請求的 IP 是否在可用池內且未被佔用
+                        if (is_ip_available(req_ip_host)) {
+                            log_message(LOG_INFO, "Stubborn client insists on %s. Reallocating IP!", req_str);
+                            
+                            // 釋放原本 OFFER 的 IP，改綁client端要的 IP
+                            release_ip(assigned_ip);
+                            bind_specific_ip(recv_packet.chaddr, req_ip_host);
+                            
+                            assigned_ip = req_ip_host;
+                            ass_addr.s_addr = req_addr.s_addr; // 同步比對結果
+                        } else {
+                            if ((req_addr.s_addr & config.netmask) != (ass_addr.s_addr & config.netmask)) {
+                                log_message(LOG_WARNING, "Requested IP is in different subnet!");
                             }
+                            log_message(LOG_WARNING, "IP Mismatch and unavailable! Client asked for %s, but Pool says %s", req_str, ass_str);
+                            send_dhcp_nak(sockfd, &recv_packet, &client_addr);
+                            break;
                         }
                     }
+
                     // C. 如果一切正常 (requested_ip == assigned_ip 或續約流程)
                     log_message(LOG_INFO, "Validation Passed! Sending ACK.");
 
@@ -295,14 +200,18 @@ int main(int argc, char *argv[]){
                     struct dhcp_packet ack_packet;
                     memset(&ack_packet, 0, sizeof(ack_packet));
                     //基本欄位填充
-                    ack_packet.xid = recv_packet.xid; //必須與Request的IP一致
-                    ack_packet.op = 2;    //boot reply
-                    ack_packet.htype = 1;  // 確保是 1
-                    ack_packet.hlen = 6;   // 確保是 6
-
-                    //從之前的 allocate_ip 或資料庫中找出該 MAC 對應的 IP
-                    ack_packet.yiaddr = htonl(assigned_ip);    //正式將IP分配給client
-                    memcpy(ack_packet.chaddr, recv_packet.chaddr, 6);
+                    ack_packet.op     = 2;                       // Boot Reply
+                    ack_packet.htype  = recv_packet.htype;       // 照抄 client 的硬體類型 (Ethernet=1)
+                    ack_packet.hlen   = recv_packet.hlen;        // 照抄硬體長度 (6)
+                    ack_packet.hops   = 0;
+                    ack_packet.xid    = recv_packet.xid;         // 必須與 Request 的 xid 完全一致
+                    ack_packet.secs   = 0;
+                    ack_packet.flags  = recv_packet.flags;       // 【關鍵】必須照抄 client 的 Broadcast Flag
+                    ack_packet.ciaddr = recv_packet.ciaddr;      // 續約時若有 ciaddr 需帶回
+                    ack_packet.yiaddr = htonl(assigned_ip);      // 正式指派的 IP (轉為網路序)
+                    ack_packet.siaddr = 0;
+                    ack_packet.giaddr = recv_packet.giaddr;      // 【關鍵】保留 Relay Agent 欄位
+                    memcpy(ack_packet.chaddr, recv_packet.chaddr, 16);
                     ack_packet.magic_cookie = htonl(DHCP_MAGIC_COOKIE);
 
                     //填充 Options (TLV 串列)

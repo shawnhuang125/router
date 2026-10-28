@@ -32,6 +32,21 @@ uint32_t allocate_ip(uint8_t *client_mac);
 // 釋放 IP (當收到 DHCPRELEASE 時使用)
 void release_ip(uint32_t ip);
 
+/**
+ * @brief Checks if a specific IP address is valid and currently unallocate>
+ * @param ip Target IPv4 address to check (Host-Endian).
+ * @return 1 if the IP is available, 0 if it is already allocated or invali>
+ */
+int is_ip_available(uint32_t ip);
+
+/**
+ * @brief Binds a specific IP address directly to a client's MAC address.
+ * @param chaddr Client hardware address (6-byte MAC).
+ * @param ip Target IPv4 address to assign (Host-Endian).
+ * @return 0 on success, -1 on failure (e.g., IP not found in pool).
+ */
+int bind_specific_ip(uint8_t *chaddr, uint32_t ip);
+
 //或許is_allocated = 1的IP (DHCPACK時使用)
 uint32_t get_assigned_ip(uint8_t *client_mac);
 

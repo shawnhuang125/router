@@ -181,3 +181,36 @@ void save_leases(const char *path) {
     }
     fclose(fp);
 }
+
+
+// 檢查指定 IP 是否處於未配置且有效狀態 (同時支援 Host 與 Network Endian 比對)
+int is_ip_available(uint32_t ip) {
+    time_t now = time(NULL);
+    uint32_t swapped_ip = __builtin_bswap32(ip); // 自動計算反序值
+
+    for (int i = 0; i < pool_size; i++) {
+        // 只要能對上任何一種位元序就符合
+        if (ip_pool[i].ip == ip || ip_pool[i].ip == swapped_ip) {
+            if (ip_pool[i].is_assigned == 0 || ip_pool[i].expiry < now) {
+                return 1;
+            }
+            return 0; // 真的被別人拿走且未過期
+        }
+    }
+    return 0; // 不在 Pool 範圍內
+}
+
+// 綁定特定 IP (同時相容兩種位元序查找)
+int bind_specific_ip(uint8_t *chaddr, uint32_t ip) {
+    uint32_t swapped_ip = __builtin_bswap32(ip);
+
+    for (int i = 0; i < pool_size; i++) {
+        if (ip_pool[i].ip == ip || ip_pool[i].ip == swapped_ip) {
+            ip_pool[i].is_assigned = 1;
+            memcpy(ip_pool[i].mac, chaddr, 6);
+            ip_pool[i].expiry = time(NULL) + 86400; // 租期 1 天
+            return 0;
+        }
+    }
+    return -1;
+}

@@ -31,7 +31,8 @@ int load_config(const char *path) {
             } else if (strcmp(key, "server_ip") == 0) {
                 config.server_ip = inet_addr(value_buf);
             } else if (strcmp(key, "netmask") == 0) {
-                config.netmask = inet_addr(value_buf);
+               // 使用網路位元序
+               config.netmask = inet_addr(value_buf);
             } else if (strcmp(key, "router") == 0) {
                 config.router = inet_addr(value_buf);
             } else if (strcmp(key, "ip_start") == 0) {

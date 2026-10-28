@@ -90,12 +90,56 @@ struct dhcp_client {
     time_t   last_transmit;
 };
 
-// 函式宣告
+
+/**
+ * @brief Normalizes the client requested IP to handle broken firmware byte order.
+ * @note Corrects Little-Endian byte-swapped Option 50 payloads sent by non-compliant clients.
+ * @param req_addr Pointer to the requested in_addr structure (modified in-place).
+ * @param server_netmask Server subnet mask (Network-Endian).
+ * @param server_subnet Server subnet network address (Network-Endian).
+ */
+void normalize_requested_ip(struct in_addr *req_addr, uint32_t server_netmask, uint32_t server_subnet);
+
+/**
+ * @brief Constructs and transmits a DHCPNAK message to reject an invalid client request.
+ * @param sockfd Active UDP socket file descriptor.
+ * @param client_pkt Pointer to the original client request packet (for xid, flags, chaddr).
+ * @param client_addr Destination socket address (broadcasts to 255.255.255.255:68 if unicast unavailable).
+ * @return 0 on success, -1 on send error.
+ */
 void send_dhcp_nak(int sockfd, struct dhcp_packet *client_pkt, struct sockaddr_in *client_addr);
-//void handle_timeout(int fd, struct dhcp_client *client);
+
+/**
+ * @brief Constructs and transmits a DHCPOFFER packet to propose an IP lease to a client.
+ * @note Ensures RFC 2131 compliance with mandatory options and pads packet to a minimum of 300 bytes.
+ * @param sockfd Active UDP socket file descriptor.
+ * @param client_pkt Pointer to the incoming DHCPDISCOVER packet (used for xid, flags, chaddr).
+ * @param offered_ip Proposed IPv4 address for the client (Host-Endian).
+ * @param client_addr Destination socket address structure (typically broadcast 255.255.255.255:68).
+ * @return 0 on success, or -1 if packet transmission fails.
+ */
+int send_dhcp_offer(int sockfd, struct dhcp_packet *client_pkt, uint32_t offered_ip);
+
+/**
+ * @brief Parses and extracts a specific option value from the DHCP options field.
+ * @details Traverses the TLV (Type-Length-Value) options sequence within bounds, skipping
+ *          padding bytes (Option 0) and terminating on the End option (Option 255).
+ * @param packet Pointer to the received DHCP packet structure.
+ * @param code DHCP Option code to search for (e.g., Option 50 for Requested IP, Option 53 for Message Type).
+ * @param out Pointer to destination buffer where option data bytes will be written.
+ * @param max_len Maximum capacity of the destination buffer in bytes to prevent buffer overflow.
+ * @return Number of bytes successfully copied into out buffer, or 0 if option is missing/malformed.
+ */
 int get_dhcp_option(struct dhcp_packet *packet, uint8_t code, void *out, int max_len);
-//void send_dhcp_discover(int fd, struct dhcp_client *client);
-//void send_dhcp_request(int fd, struct dhcp_client *client);
+
+/**
+ * @brief Populates standard BOOTP/DHCP header fields for an outbound response packet.
+ * @details Initializes boilerplate headers including operation code (BOOTREPLY), hardware address
+ *          type and length, transaction ID (xid), broadcast flags, client hardware address (chaddr),
+ *          and the standard DHCP Magic Cookie (0x63825363).
+ * @param packet Pointer to the destination outbound DHCP packet structure to populate.
+ * @param client Pointer to the client state context or incoming client packet reference.
+ */
 void fill_common_header(struct dhcp_packet *packet, struct dhcp_client *client);
 
 #endif
