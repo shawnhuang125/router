@@ -1,6 +1,6 @@
-# 專案介紹 | [DEMO影片連結](https://www.youtube.com/watch?v=-pqwoioNhtU)
+## 專案介紹 | [DEMO影片連結](https://www.youtube.com/watch?v=-pqwoioNhtU)
 
-##  專案架構
+###  專案架構
 - Hroute是一個基於 Linux 環境開發的輕量級路由系統框架。
 - 本專案採用 C 語言編寫，旨在提供一個高效率、易於擴充的網路服務解決方案。透過模組化的架構設計，將不同的網路協議（如 DHCP, DNS, NAT）獨立開發與編譯，並共享底層通用工具庫，實現了高度的程式碼復用性與維護性。
 ```
@@ -18,7 +18,7 @@ route/                  # 專案根目錄
     ├── include/        # DHCP 模組私有標頭檔（.h），定義 DHCP 協定封包格式與狀態機介面
     └── src/            # DHCP 協定邏輯原始碼（.c），實作 DISCOVER 解析、OFFER/REQUEST/ACK 等核心流程
 ```
-## 架構設計介紹
+### 架構設計介紹
 
 - 模組化編譯架構：每個子目錄擁有獨立的 Makefile 與 include 環境，方便開發者獨立測試單一模組。
 
@@ -32,9 +32,9 @@ route/                  # 專案根目錄
 
 - NAT 模組：實作網路位址轉換，提供內外網封包轉發功能。
 
-## 部署說明
+### 部署說明
 
-### 下載與安裝 (Release 安裝)
+#### 下載與安裝 (Release 安裝)
 
 1. **取得最新發布檔**
 至 GitHub Releases 下載最新版本的壓縮檔（例如 `Hroute-v1.0.0-linux-x86_64.tar.gz`），並傳輸至目標主機 (Target Machine)。
